@@ -259,15 +259,30 @@
 
     // 画像データを取得する。既に読み込み済みの<img>があればcanvas経由（fetchのCORS問題を回避できるため優先）
     async function getBlobForItem(url, imgEl) {
-      if (imgEl && imgEl.complete && imgEl.naturalWidth) {
+      // 既に読み込み済みの<img>があればcanvas経由（fetchのCORS問題を回避できるため優先）
+      let sourceImg = (imgEl && imgEl.complete && imgEl.naturalWidth) ? imgEl : null;
+      if (!sourceImg) {
+        try {
+          sourceImg = await new Promise((resolve, reject) => {
+            const im = new Image();
+            im.crossOrigin = 'anonymous';
+            im.onload = () => resolve(im);
+            im.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+            im.src = url;
+          });
+        } catch (e) {
+          sourceImg = null;
+        }
+      }
+      if (sourceImg) {
         try {
           const canvas = document.createElement('canvas');
-          canvas.width = imgEl.naturalWidth;
-          canvas.height = imgEl.naturalHeight;
+          canvas.width = sourceImg.naturalWidth;
+          canvas.height = sourceImg.naturalHeight;
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(imgEl, 0, 0);
+          ctx.drawImage(sourceImg, 0, 0);
           const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-          if (blob) return blob;
+          if (blob) return blob; // 常にimage/pngとして統一される
         } catch (e) { /* CORSでcanvasが汚染された場合はfetchにフォールバック */ }
       }
       const res = await fetch(url);
@@ -312,25 +327,28 @@
       }).catch((err) => showError('コピーに失敗しました', err));
     }
 
-    async function copyImage(url, imgEl, feedbackEl) {
-      let blob;
-      try {
-        blob = await getBlobForItem(url, imgEl);
-      } catch (err) {
-        showError('コピーに失敗しました', err);
+    // 画像コピー：iOS Safari等は「クリックした瞬間に同期的にclipboard.writeを呼ぶ」必要があるため、
+    // データ取得を待たずに、Promiseそのものをclipboard.writeへ渡す形にしている
+    function copyImage(url, imgEl, feedbackEl) {
+      if (!(navigator.clipboard && window.ClipboardItem)) {
+        const w = window.open('', '_blank');
+        populateManualCopyWindow(w, url);
         return;
       }
       try {
-        if (navigator.clipboard && window.ClipboardItem) {
-          await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
+        const blobPromise = getBlobForItem(url, imgEl);
+        const item = new ClipboardItem({ 'image/png': blobPromise });
+        navigator.clipboard.write([item]).then(() => {
           statusText.textContent = 'コピーしました';
           if (feedbackEl) flashSuccess(feedbackEl);
           setTimeout(() => { if (statusText.textContent === 'コピーしました') statusText.textContent = ''; }, 1500);
-          return;
-        }
-        throw new Error('このブラウザは画像コピーに対応していません');
+        }).catch((err) => {
+          console.error('[MyDrop] clipboard write failed', err);
+          const w = window.open('', '_blank');
+          populateManualCopyWindow(w, url);
+        });
       } catch (err) {
-        // 最終手段：新しいタブに開いて手動コピーしてもらう
+        console.error('[MyDrop] copyImage error', err);
         const w = window.open('', '_blank');
         populateManualCopyWindow(w, url);
       }
