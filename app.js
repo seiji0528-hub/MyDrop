@@ -27,6 +27,7 @@
 
   // ---------- Supabase ----------
   let supabase;
+  const MAX_VIDEO_MB = 15; // 動画1本あたりの上限（無料枠を圧迫しないための目安）
 
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -34,6 +35,19 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   function init() {
+    if (!window.supabase) {
+      showFatal('Supabaseライブラリの読み込みに失敗しました。ネットワーク接続を確認してください。');
+      return;
+    }
+    if (!SUPABASE_URL || SUPABASE_URL.includes('YOUR-PROJECT-ID')) {
+      showFatal('config.js の SUPABASE_URL が未設定です。');
+      return;
+    }
+    if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.includes('YOUR-ANON-PUBLIC-KEY')) {
+      showFatal('config.js の SUPABASE_ANON_KEY が未設定です。');
+      return;
+    }
+
     supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const textInput = document.getElementById('textInput');
@@ -45,8 +59,20 @@
     const emptyMsg = document.getElementById('emptyMsg');
     const statusText = document.getElementById('statusText');
 
+    function showFatal(msg) {
+      const s = document.getElementById('statusText');
+      if (s) s.textContent = msg;
+      console.error('[MyDrop]', msg);
+    }
+
+    function showError(prefix, err) {
+      const msg = (err && (err.message || err.error_description || err.hint)) || String(err) || '不明なエラー';
+      statusText.textContent = prefix + '：' + msg;
+      console.error('[MyDrop]', prefix, err);
+    }
+
     let items = [];
-    let pendingImages = [];
+    let pendingFiles = []; // [{kind:'image'|'video', blob, dataUrl?, name}]
 
     function autoGrow() {
       textInput.style.height = 'auto';
@@ -54,7 +80,7 @@
     }
     textInput.addEventListener('input', () => {
       autoGrow();
-      sendBtn.disabled = !textInput.value.trim() && pendingImages.length === 0;
+      sendBtn.disabled = !textInput.value.trim() && pendingFiles.length === 0;
     });
     textInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -65,49 +91,68 @@
     fileInput.addEventListener('change', async (e) => {
       const files = Array.from(e.target.files || []);
       if (!files.length) return;
-      statusText.textContent = files.length > 1 ? `画像を処理中…（0/${files.length}）` : '画像を処理中…';
+      statusText.textContent = files.length > 1 ? `処理中…（0/${files.length}）` : '処理中…';
       let done = 0;
       for (const file of files) {
         try {
-          const { blob, dataUrl } = await compressImage(file);
-          pendingImages.push({ blob, dataUrl });
-        } catch (err) {}
+          if (file.type.startsWith('video/')) {
+            const sizeMB = file.size / (1024 * 1024);
+            if (sizeMB > MAX_VIDEO_MB) {
+              statusText.textContent = `「${file.name}」は${sizeMB.toFixed(1)}MBあり、上限${MAX_VIDEO_MB}MBを超えています（スキップしました）`;
+              await sleep(1500);
+            } else {
+              pendingFiles.push({ kind: 'video', blob: file, name: file.name });
+            }
+          } else if (file.type.startsWith('image/')) {
+            const { blob, dataUrl } = await compressImage(file);
+            pendingFiles.push({ kind: 'image', blob, dataUrl, name: file.name });
+          }
+        } catch (err) {
+          console.error('[MyDrop] file processing error', err);
+        }
         done++;
-        if (files.length > 1) statusText.textContent = `画像を処理中…（${done}/${files.length}）`;
+        if (files.length > 1) statusText.textContent = `処理中…（${done}/${files.length}）`;
       }
       renderPreview();
-      sendBtn.disabled = pendingImages.length === 0 && !textInput.value.trim();
+      sendBtn.disabled = pendingFiles.length === 0 && !textInput.value.trim();
       statusText.textContent = '';
       fileInput.value = '';
     });
 
     function renderPreview() {
       previewArea.innerHTML = '';
-      if (!pendingImages.length) return;
+      if (!pendingFiles.length) return;
       const listWrap = document.createElement('div');
       listWrap.className = 'preview-list';
-      pendingImages.forEach((p, idx) => {
+      pendingFiles.forEach((p, idx) => {
         const wrap = document.createElement('div');
         wrap.className = 'preview-thumb';
-        const img = document.createElement('img');
-        img.src = p.dataUrl;
+        if (p.kind === 'image') {
+          const img = document.createElement('img');
+          img.src = p.dataUrl;
+          wrap.appendChild(img);
+        } else {
+          const vBox = document.createElement('div');
+          vBox.style.cssText = 'width:56px;height:56px;border-radius:8px;background:#222;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;';
+          vBox.textContent = '動画';
+          wrap.appendChild(vBox);
+        }
         const removeBtn = document.createElement('button');
         removeBtn.className = 'remove-x';
         removeBtn.textContent = '×';
         removeBtn.onclick = () => {
-          pendingImages.splice(idx, 1);
+          pendingFiles.splice(idx, 1);
           renderPreview();
-          sendBtn.disabled = pendingImages.length === 0 && !textInput.value.trim();
+          sendBtn.disabled = pendingFiles.length === 0 && !textInput.value.trim();
         };
-        wrap.appendChild(img);
         wrap.appendChild(removeBtn);
         listWrap.appendChild(wrap);
       });
       previewArea.appendChild(listWrap);
-      if (pendingImages.length > 1) {
+      if (pendingFiles.length > 1) {
         const count = document.createElement('div');
         count.className = 'preview-count';
-        count.textContent = `${pendingImages.length}枚選択中（1枚ずつ個別のメッセージとして送信されます）`;
+        count.textContent = `${pendingFiles.length}件選択中（1件ずつ個別のメッセージとして送信されます）`;
         previewArea.appendChild(count);
       }
     }
@@ -129,46 +174,66 @@
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, width, height);
             canvas.toBlob((blob) => {
+              if (!blob) { reject(new Error('画像の圧縮に失敗しました')); return; }
               const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
               resolve({ blob, dataUrl });
             }, 'image/jpeg', 0.85);
           };
-          img.onerror = reject;
+          img.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
           img.src = e.target.result;
         };
-        reader.onerror = reject;
+        reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
         reader.readAsDataURL(file);
       });
     }
 
     async function handleSend() {
       const text = textInput.value.trim();
-      const images = pendingImages.slice();
-      if (!text && images.length === 0) return;
+      const files = pendingFiles.slice();
+      if (!text && files.length === 0) return;
       sendBtn.disabled = true;
-      let failCount = 0;
+
       try {
         if (text) {
+          statusText.textContent = '送信中…';
           const { error } = await supabase.from('drop_items').insert({ type: 'text', content: text });
-          if (!error) { textInput.value = ''; autoGrow(); await refresh(); }
+          if (error) {
+            showError('テキストの送信に失敗しました', error);
+          } else {
+            textInput.value = '';
+            autoGrow();
+            statusText.textContent = '';
+            await refresh();
+          }
         }
-        for (let i = 0; i < images.length; i++) {
-          statusText.textContent = images.length > 1 ? `送信中…（${i + 1}/${images.length}）` : '送信中…';
-          const path = `${uid()}.jpg`;
-          const { error: upErr } = await supabase.storage.from('drop-images').upload(path, images[i].blob, { contentType: 'image/jpeg' });
-          if (upErr) { failCount++; continue; }
-          const { error: insErr } = await supabase.from('drop_items').insert({ type: 'image', image_path: path });
-          if (insErr) { failCount++; continue; }
-          pendingImages = pendingImages.filter(p => p !== images[i]);
+
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          statusText.textContent = files.length > 1 ? `送信中…（${i + 1}/${files.length}）` : '送信中…';
+          const ext = f.kind === 'video' ? (f.name.split('.').pop() || 'mp4') : 'jpg';
+          const path = `${uid()}.${ext}`;
+          const contentType = f.kind === 'video' ? (f.blob.type || 'video/mp4') : 'image/jpeg';
+
+          const { error: upErr } = await supabase.storage.from('drop-images').upload(path, f.blob, { contentType });
+          if (upErr) {
+            showError((f.kind === 'video' ? '動画' : '画像') + 'のアップロードに失敗しました', upErr);
+            continue;
+          }
+          const { error: insErr } = await supabase.from('drop_items').insert({ type: f.kind, image_path: path });
+          if (insErr) {
+            showError('データベースへの登録に失敗しました', insErr);
+            continue;
+          }
+          pendingFiles = pendingFiles.filter(p => p !== f);
           renderPreview();
           await refresh();
-          if (i < images.length - 1) await sleep(200);
+          statusText.textContent = '';
+          if (i < files.length - 1) await sleep(200);
         }
-        statusText.textContent = failCount > 0 ? `${failCount}件の送信に失敗しました` : '';
       } catch (err) {
-        statusText.textContent = '送信に失敗しました';
+        showError('送信に失敗しました', err);
       }
-      sendBtn.disabled = !textInput.value.trim() && pendingImages.length === 0;
+      sendBtn.disabled = !textInput.value.trim() && pendingFiles.length === 0;
     }
     document.getElementById('sendBtn').addEventListener('click', handleSend);
 
@@ -182,8 +247,9 @@
     }
 
     async function deleteItem(it) {
-      await supabase.from('drop_items').delete().eq('id', it.id);
-      if (it.type === 'image' && it.image_path) {
+      const { error } = await supabase.from('drop_items').delete().eq('id', it.id);
+      if (error) { showError('削除に失敗しました', error); return; }
+      if ((it.type === 'image' || it.type === 'video') && it.image_path) {
         await supabase.storage.from('drop-images').remove([it.image_path]);
       }
       await refresh();
@@ -200,16 +266,7 @@
         statusText.textContent = 'コピーしました';
         if (feedbackEl) flashSuccess(feedbackEl);
         setTimeout(() => { if (statusText.textContent === 'コピーしました') statusText.textContent = ''; }, 1200);
-      }).catch(() => { statusText.textContent = 'コピーに失敗しました'; });
-    }
-
-    function dataURLtoBlob(dataUrl) {
-      const parts = dataUrl.split(',');
-      const mime = (parts[0].match(/:(.*?);/) || [, 'image/jpeg'])[1];
-      const binary = atob(parts[1]);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return new Blob([bytes], { type: mime });
+      }).catch((err) => showError('コピーに失敗しました', err));
     }
 
     function copyImage(url, feedbackEl) {
@@ -273,6 +330,29 @@
           copyBtn.textContent = 'コピー';
           copyBtn.onclick = (e) => { e.stopPropagation(); copyText(it.content, copyBtn); };
           actionsSide.appendChild(copyBtn);
+        } else if (it.type === 'video') {
+          const url = supabase.storage.from('drop-images').getPublicUrl(it.image_path).data.publicUrl;
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble-image';
+          bubble.style.cursor = 'default';
+          const video = document.createElement('video');
+          video.src = url;
+          video.controls = true;
+          video.style.width = '100%';
+          video.style.display = 'block';
+          bubble.appendChild(video);
+          content.appendChild(bubble);
+
+          const dlBtn = document.createElement('button');
+          dlBtn.textContent = '保存';
+          dlBtn.onclick = (e) => {
+            e.stopPropagation();
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = it.image_path || 'drop.mp4';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          };
+          actionsSide.appendChild(dlBtn);
         } else {
           const url = supabase.storage.from('drop-images').getPublicUrl(it.image_path).data.publicUrl;
           const bubble = document.createElement('div');
@@ -320,12 +400,15 @@
           .select('*')
           .order('created_at', { ascending: false })
           .limit(200);
-        if (!error && data) {
-          items = data;
-          render();
+        if (error) {
+          showError('読み込みに失敗しました', error);
+          return;
         }
-        statusText.textContent = statusText.textContent || '';
-      } catch (e) {}
+        items = data || [];
+        render();
+      } catch (e) {
+        showError('読み込みに失敗しました', e);
+      }
     }
 
     refresh();
