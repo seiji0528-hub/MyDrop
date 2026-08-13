@@ -19,11 +19,7 @@
   gateBtn.addEventListener('click', () => tryUnlock(gateInput.value));
   gateInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(gateInput.value); });
 
-  if (localStorage.getItem('mydrop_unlocked') === '1') {
-    gate.style.display = 'none';
-    app.style.display = 'block';
-    init();
-  }
+  // （自動ロック解除は、必要な変数の準備が整うファイル末尾で行います）
 
   // ---------- Supabase ----------
   let supabase;
@@ -413,5 +409,13 @@
 
     refresh();
     setInterval(refresh, 4000);
+  }
+
+  // 前回アクセスコードを入力済みなら自動でロック解除する
+  // （supabase変数など、initが必要とする準備がすべて整った後にここで実行する）
+  if (localStorage.getItem('mydrop_unlocked') === '1') {
+    gate.style.display = 'none';
+    app.style.display = 'block';
+    init();
   }
 })();
