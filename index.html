@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>My Drop</title>
+<style>
+  :root {
+    --bg: #faf9f7;
+    --card: #ffffff;
+    --border: #e5e1da;
+    --text: #2b2925;
+    --sub: #8a8478;
+    --accent: #3d5a80;
+    --accent-soft: #eef2f6;
+    --danger: #b3543f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+  }
+  #app { max-width: 480px; margin: 0 auto; padding: 16px; min-height: 100vh; }
+
+  /* ---- ゲート画面 ---- */
+  #gate {
+    max-width: 320px; margin: 80px auto; text-align: center;
+  }
+  #gate input {
+    width: 100%; padding: 12px; font-size: 16px; border-radius: 10px;
+    border: 1px solid var(--border); margin-top: 16px; text-align: center;
+  }
+  #gate button {
+    margin-top: 12px; width: 100%; padding: 12px; border: none; border-radius: 10px;
+    background: var(--accent); color: white; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  #gateError { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 18px; }
+
+  .header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .header h1 { font-size:18px; margin:0; font-weight:700; }
+  .status { font-size:12px; color: var(--sub); }
+  .composer { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 10px; margin-bottom: 16px; }
+  textarea {
+    width: 100%; border: none; resize: none; font-size: 15px; font-family: inherit;
+    outline: none; min-height: 44px; background: transparent; color: var(--text);
+  }
+  .composer-row { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .icon-btn {
+    background: var(--accent-soft); border: none; border-radius: 10px; width: 38px; height: 38px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; font-size: 18px; color: var(--accent);
+  }
+  .send-btn {
+    margin-left: auto; background: var(--accent); color: white; border: none; border-radius: 10px;
+    padding: 9px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .send-btn:disabled { opacity: 0.4; cursor: default; }
+  #fileInput { display:none; }
+
+  .preview-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .preview-thumb { position:relative; }
+  .preview-thumb img { width:56px; height:56px; object-fit:cover; border-radius:8px; display:block; }
+  .preview-thumb .remove-x {
+    position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
+    background: var(--danger); color:white; border:none; font-size:11px; line-height:18px; text-align:center; padding:0; cursor:pointer;
+  }
+  .preview-count { font-size:11px; color: var(--sub); margin-top:2px; }
+
+  .list { display:flex; flex-direction:column; gap:14px; }
+  .item-row { display: flex; align-items: flex-end; gap: 6px; margin-left: auto; max-width: 92%; }
+  .item-actions-side { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; padding-bottom: 2px; }
+  .item-actions-side button {
+    min-width: 44px; height: 26px; padding: 0 10px; border-radius: 13px;
+    background: var(--card); border: 1px solid var(--border); font-size: 11px; white-space: nowrap;
+    display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--sub);
+  }
+  .item-actions-side button.del { color: var(--danger); }
+  .item-content { display: flex; flex-direction: column; align-items: flex-end; min-width: 0; }
+  .item-meta { font-size:11px; color:var(--sub); margin-bottom:4px; }
+  .bubble-text {
+    background: var(--accent-soft); color: var(--text); border-radius: 16px; border-top-right-radius: 4px;
+    padding: 10px 14px; font-size: 15px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; cursor: pointer;
+  }
+  .bubble-image {
+    border-radius: 16px; border-top-right-radius: 4px; overflow: hidden; background: var(--card);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12); width: 220px; min-height: 120px;
+    display:flex; align-items:center; justify-content:center; cursor: pointer;
+  }
+  .bubble-image img { width:100%; display:block; }
+  .bubble-image .spinner {
+    width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { text-align:center; color:var(--sub); font-size:13px; margin-top:40px; }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <h2>My Drop</h2>
+  <p style="color:var(--sub);font-size:13px;">アクセスコードを入力してください</p>
+  <input type="password" id="gateInput" placeholder="アクセスコード" />
+  <button id="gateBtn">開く</button>
+  <div id="gateError"></div>
+</div>
+
+<div id="app" style="display:none;">
+  <div class="header">
+    <h1>My Drop</h1>
+    <span class="status" id="statusText">読み込み中…</span>
+  </div>
+
+  <div class="composer">
+    <textarea id="textInput" placeholder="メモを入力…（Enterで送信 / Shift+Enterで改行）" rows="1"></textarea>
+    <div id="previewArea"></div>
+    <div class="composer-row">
+      <button class="icon-btn" id="attachBtn" title="画像を添付">📷</button>
+      <input type="file" id="fileInput" accept="image/*" multiple />
+      <button class="send-btn" id="sendBtn" disabled>送信</button>
+    </div>
+  </div>
+
+  <div class="list" id="list"></div>
+  <div class="empty" id="emptyMsg" style="display:none;">まだ何もありません。テキストや画像を送ってみましょう。</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
