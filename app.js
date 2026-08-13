@@ -257,6 +257,53 @@
       setTimeout(() => { el.style.filter = prev || ''; }, 200);
     }
 
+    // 画像データを取得する。既に読み込み済みの<img>があればcanvas経由（fetchのCORS問題を回避できるため優先）
+    async function getBlobForItem(url, imgEl) {
+      if (imgEl && imgEl.complete && imgEl.naturalWidth) {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = imgEl.naturalWidth;
+          canvas.height = imgEl.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(imgEl, 0, 0);
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+          if (blob) return blob;
+        } catch (e) { /* CORSでcanvasが汚染された場合はfetchにフォールバック */ }
+      }
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('データの取得に失敗しました（' + res.status + '）');
+      return await res.blob();
+    }
+
+    // 保存：スマホでは共有シート（写真アプリへの保存が選べる）、それが使えない環境ではダウンロード
+    async function shareOrDownload(url, filename, imgEl) {
+      let blob;
+      try {
+        blob = await getBlobForItem(url, imgEl);
+      } catch (err) {
+        showError('保存に失敗しました', err);
+        return;
+      }
+      try {
+        const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file] });
+          return;
+        }
+      } catch (shareErr) {
+        if (shareErr && shareErr.name === 'AbortError') return; // 共有シートをキャンセルしただけなのでエラー表示しない
+        // 共有に失敗した場合は通常のダウンロードにフォールバック
+      }
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    }
+
     function copyText(text, feedbackEl) {
       navigator.clipboard.writeText(text).then(() => {
         statusText.textContent = 'コピーしました';
@@ -265,23 +312,28 @@
       }).catch((err) => showError('コピーに失敗しました', err));
     }
 
-    function copyImage(url, feedbackEl) {
-      const manualWin = window.open('', '_blank');
-      fetch(url).then(r => r.blob()).then(async (blob) => {
-        try {
-          if (navigator.clipboard && window.ClipboardItem) {
-            await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-            if (manualWin && !manualWin.closed) manualWin.close();
-            statusText.textContent = 'コピーしました';
-            if (feedbackEl) flashSuccess(feedbackEl);
-            setTimeout(() => { if (statusText.textContent === 'コピーしました') statusText.textContent = ''; }, 1500);
-            return;
-          }
-          throw new Error('unsupported');
-        } catch (e) {
-          populateManualCopyWindow(manualWin, url);
+    async function copyImage(url, imgEl, feedbackEl) {
+      let blob;
+      try {
+        blob = await getBlobForItem(url, imgEl);
+      } catch (err) {
+        showError('コピーに失敗しました', err);
+        return;
+      }
+      try {
+        if (navigator.clipboard && window.ClipboardItem) {
+          await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
+          statusText.textContent = 'コピーしました';
+          if (feedbackEl) flashSuccess(feedbackEl);
+          setTimeout(() => { if (statusText.textContent === 'コピーしました') statusText.textContent = ''; }, 1500);
+          return;
         }
-      }).catch(() => populateManualCopyWindow(manualWin, url));
+        throw new Error('このブラウザは画像コピーに対応していません');
+      } catch (err) {
+        // 最終手段：新しいタブに開いて手動コピーしてもらう
+        const w = window.open('', '_blank');
+        populateManualCopyWindow(w, url);
+      }
     }
 
     function populateManualCopyWindow(win, url) {
@@ -343,10 +395,7 @@
           dlBtn.textContent = '保存';
           dlBtn.onclick = (e) => {
             e.stopPropagation();
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = it.image_path || 'drop.mp4';
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            shareOrDownload(url, it.image_path || 'drop.mp4', null);
           };
           actionsSide.appendChild(dlBtn);
         } else {
@@ -355,24 +404,22 @@
           bubble.className = 'bubble-image';
           const img = document.createElement('img');
           img.loading = 'lazy';
+          img.crossOrigin = 'anonymous';
           img.src = url;
-          bubble.onclick = () => copyImage(url, bubble);
+          bubble.onclick = () => copyImage(url, img, bubble);
           bubble.appendChild(img);
           content.appendChild(bubble);
 
           const copyBtn = document.createElement('button');
           copyBtn.textContent = 'コピー';
-          copyBtn.onclick = (e) => { e.stopPropagation(); copyImage(url, copyBtn); };
+          copyBtn.onclick = (e) => { e.stopPropagation(); copyImage(url, img, copyBtn); };
           actionsSide.appendChild(copyBtn);
 
           const dlBtn = document.createElement('button');
           dlBtn.textContent = '保存';
           dlBtn.onclick = (e) => {
             e.stopPropagation();
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = it.image_path || 'drop.jpg';
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            shareOrDownload(url, it.image_path || 'drop.jpg', img);
           };
           actionsSide.appendChild(dlBtn);
         }
