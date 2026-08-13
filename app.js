@@ -402,6 +402,7 @@
         }
         items = data || [];
         render();
+        if (statusText.textContent === '読み込み中…') statusText.textContent = '';
       } catch (e) {
         showError('読み込みに失敗しました', e);
       }
