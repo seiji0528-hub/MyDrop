@@ -24,6 +24,7 @@
   // ---------- Supabase ----------
   let supabase;
   const MAX_VIDEO_MB = 15; // 動画1本あたりの上限（無料枠を圧迫しないための目安）
+  const DEVICE = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'phone' : 'pc';
 
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -192,7 +193,7 @@
       try {
         if (text) {
           statusText.textContent = '送信中…';
-          const { error } = await supabase.from('drop_items').insert({ type: 'text', content: text });
+          const { error } = await supabase.from('drop_items').insert({ type: 'text', content: text, device: DEVICE });
           if (error) {
             showError('テキストの送信に失敗しました', error);
           } else {
@@ -215,7 +216,7 @@
             showError((f.kind === 'video' ? '動画' : '画像') + 'のアップロードに失敗しました', upErr);
             continue;
           }
-          const { error: insErr } = await supabase.from('drop_items').insert({ type: f.kind, image_path: path });
+          const { error: insErr } = await supabase.from('drop_items').insert({ type: f.kind, image_path: path, device: DEVICE });
           if (insErr) {
             showError('データベースへの登録に失敗しました', insErr);
             continue;
@@ -368,12 +369,116 @@
         '<img src="' + url + '" style="display:block;max-width:100%;margin:0 auto;">';
     }
 
+    // 画像を大きく表示し、ピンチ／ホイールで拡大縮小できるビューアー
+    function openLightbox(url, imgElForCopy, filename) {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;' +
+        'display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none;';
+
+      const img = document.createElement('img');
+      img.src = url;
+      img.style.cssText = 'max-width:92vw;max-height:78vh;touch-action:none;user-select:none;' +
+        'transform-origin:center center;cursor:grab;';
+      overlay.appendChild(img);
+
+      let scale = 1, tx = 0, ty = 0;
+      function applyTransform() {
+        img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+      }
+
+      const pointers = new Map();
+      let startDist = 0, startScale = 1, panStart = null, startTxTy = null;
+
+      img.addEventListener('pointerdown', (e) => {
+        img.setPointerCapture(e.pointerId);
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 1) {
+          panStart = { x: e.clientX, y: e.clientY };
+          startTxTy = { x: tx, y: ty };
+        } else if (pointers.size === 2) {
+          const pts = [...pointers.values()];
+          startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          startScale = scale;
+        }
+      });
+      img.addEventListener('pointermove', (e) => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 2) {
+          const pts = [...pointers.values()];
+          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          if (startDist > 0) {
+            scale = Math.min(5, Math.max(1, startScale * (dist / startDist)));
+            applyTransform();
+          }
+        } else if (pointers.size === 1 && panStart) {
+          tx = startTxTy.x + (e.clientX - panStart.x);
+          ty = startTxTy.y + (e.clientY - panStart.y);
+          applyTransform();
+        }
+      });
+      function endPointer(e) {
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) startDist = 0;
+        if (pointers.size === 0) panStart = null;
+      }
+      img.addEventListener('pointerup', endPointer);
+      img.addEventListener('pointercancel', endPointer);
+      img.addEventListener('pointerleave', endPointer);
+
+      let lastTap = 0;
+      img.addEventListener('pointerup', () => {
+        const now = Date.now();
+        if (now - lastTap < 300 && pointers.size === 0) {
+          if (scale > 1) { scale = 1; tx = 0; ty = 0; } else { scale = 2; }
+          applyTransform();
+        }
+        lastTap = now;
+      });
+
+      overlay.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        scale = Math.min(5, Math.max(1, scale - e.deltaY * 0.0015));
+        applyTransform();
+      }, { passive: false });
+
+      const toolbar = document.createElement('div');
+      toolbar.style.cssText = 'position:absolute;top:14px;right:14px;display:flex;gap:8px;';
+      function mkBtn(label) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = 'padding:8px 14px;border-radius:20px;border:none;background:rgba(255,255,255,0.18);' +
+          'color:#fff;font-size:13px;cursor:pointer;';
+        return b;
+      }
+      const closeBtn = mkBtn('閉じる');
+      closeBtn.onclick = () => overlay.remove();
+      const copyBtn = mkBtn('コピー');
+      copyBtn.onclick = () => copyImage(url, imgElForCopy, copyBtn);
+      const saveBtn = mkBtn('保存');
+      saveBtn.onclick = () => shareOrDownload(url, filename || 'drop.jpg', imgElForCopy);
+      toolbar.appendChild(copyBtn);
+      toolbar.appendChild(saveBtn);
+      toolbar.appendChild(closeBtn);
+      overlay.appendChild(toolbar);
+
+      const hint = document.createElement('div');
+      hint.style.cssText = 'position:absolute;bottom:16px;left:0;right:0;text-align:center;' +
+        'color:rgba(255,255,255,0.6);font-size:11px;padding:0 24px;';
+      hint.textContent = 'ピンチ操作（PCはスクロール）で拡大縮小できます。うまくコピーできない場合は、この画面のままスクリーンショット（Windowsは Win+Shift+S のSnipping Tool）も使えます';
+      overlay.appendChild(hint);
+
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      document.body.appendChild(overlay);
+    }
+
     function render() {
       list.innerHTML = '';
       emptyMsg.style.display = items.length === 0 ? 'block' : 'none';
       items.forEach(it => {
         const row = document.createElement('div');
-        row.className = 'item-row';
+        const isMine = !it.device || it.device === DEVICE;
+        row.className = 'item-row' + (isMine ? '' : ' other-device');
 
         const content = document.createElement('div');
         content.className = 'item-content';
@@ -424,7 +529,7 @@
           img.loading = 'lazy';
           img.crossOrigin = 'anonymous';
           img.src = url;
-          bubble.onclick = () => copyImage(url, img, bubble);
+          bubble.onclick = () => openLightbox(url, img, it.image_path || 'drop.jpg');
           bubble.appendChild(img);
           content.appendChild(bubble);
 
