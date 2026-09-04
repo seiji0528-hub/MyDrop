@@ -94,6 +94,15 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .empty { text-align:center; color:var(--sub); font-size:13px; margin-top:40px; }
+
+  /* 送信元デバイスが「今見ている端末と違う」場合は左寄せに反転表示（UI自体は同じデザイン） */
+  .item-row.other-device { margin-left: 0; margin-right: auto; flex-direction: row-reverse; }
+  .item-row.other-device .item-content { align-items: flex-start; }
+  .item-row.other-device .bubble-text,
+  .item-row.other-device .bubble-image {
+    border-top-right-radius: 16px;
+    border-top-left-radius: 4px;
+  }
 </style>
 </head>
 <body>
@@ -117,7 +126,7 @@
     <div id="previewArea"></div>
     <div class="composer-row">
       <button class="icon-btn" id="attachBtn" title="画像を添付">📷</button>
-      <input type="file" id="fileInput" accept="image/*" multiple />
+      <input type="file" id="fileInput" accept="image/*,video/*" multiple />
       <button class="send-btn" id="sendBtn" disabled>送信</button>
     </div>
   </div>
