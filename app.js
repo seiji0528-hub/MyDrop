@@ -82,12 +82,28 @@
     textInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
     });
+    textInput.addEventListener('paste', (e) => {
+      const items = Array.from(e.clipboardData ? e.clipboardData.items : []);
+      const files = items
+        .filter(it => it.kind === 'file' && (it.type.startsWith('image/') || it.type.startsWith('video/')))
+        .map(it => it.getAsFile())
+        .filter(Boolean);
+      if (files.length) {
+        e.preventDefault(); // 画像などが含まれる場合は、テキストとしての貼り付けは行わない
+        processIncomingFiles(files);
+      }
+    });
 
     attachBtn.addEventListener('click', () => fileInput.click());
 
     fileInput.addEventListener('change', async (e) => {
       const files = Array.from(e.target.files || []);
       if (!files.length) return;
+      await processIncomingFiles(files);
+      fileInput.value = '';
+    });
+
+    async function processIncomingFiles(files) {
       statusText.textContent = files.length > 1 ? `処理中…（0/${files.length}）` : '処理中…';
       let done = 0;
       for (const file of files) {
@@ -113,8 +129,7 @@
       renderPreview();
       sendBtn.disabled = pendingFiles.length === 0 && !textInput.value.trim();
       statusText.textContent = '';
-      fileInput.value = '';
-    });
+    }
 
     function renderPreview() {
       previewArea.innerHTML = '';
