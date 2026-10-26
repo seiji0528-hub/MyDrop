@@ -267,6 +267,13 @@
       await refresh();
     }
 
+    // よく使うテキストのピン留め／解除
+    async function togglePin(it) {
+      const { error } = await supabase.from('drop_items').update({ pinned: !it.pinned }).eq('id', it.id);
+      if (error) { showError('ピン留めの更新に失敗しました', error); return; }
+      await refresh();
+    }
+
     function flashSuccess(el) {
       const prev = el.style.filter;
       el.style.filter = 'brightness(0.9)';
@@ -487,8 +494,34 @@
       document.body.appendChild(overlay);
     }
 
+    function renderPinned() {
+      const bar = document.getElementById('pinnedBar');
+      if (!bar) return;
+      const pinned = items.filter(it => it.type === 'text' && it.pinned);
+      bar.innerHTML = '';
+      if (!pinned.length) { bar.style.display = 'none'; return; }
+      bar.style.display = 'flex';
+      pinned.forEach(it => {
+        const chip = document.createElement('div');
+        chip.className = 'pinned-chip';
+        chip.title = it.content;
+        const label = document.createElement('span');
+        label.className = 'pinned-chip-label';
+        label.textContent = it.content;
+        chip.appendChild(label);
+        chip.onclick = () => copyText(it.content, chip);
+        const unpinBtn = document.createElement('span');
+        unpinBtn.className = 'pinned-chip-x';
+        unpinBtn.textContent = '×';
+        unpinBtn.onclick = (e) => { e.stopPropagation(); togglePin(it); };
+        chip.appendChild(unpinBtn);
+        bar.appendChild(chip);
+      });
+    }
+
     function render() {
       list.innerHTML = '';
+      renderPinned();
       emptyMsg.style.display = items.length === 0 ? 'block' : 'none';
       items.forEach(it => {
         const row = document.createElement('div');
@@ -516,6 +549,11 @@
           copyBtn.textContent = 'コピー';
           copyBtn.onclick = (e) => { e.stopPropagation(); copyText(it.content, copyBtn); };
           actionsSide.appendChild(copyBtn);
+
+          const pinBtn = document.createElement('button');
+          pinBtn.textContent = it.pinned ? 'ピン解除' : 'ピン留め';
+          pinBtn.onclick = (e) => { e.stopPropagation(); togglePin(it); };
+          actionsSide.appendChild(pinBtn);
         } else if (it.type === 'video') {
           const url = supabase.storage.from('drop-images').getPublicUrl(it.image_path).data.publicUrl;
           const bubble = document.createElement('div');
