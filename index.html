@@ -3,8 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
-<title>My Drop</title>
+<title>Drop</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
 <style>
   :root {
     --bg: #faf9f7;
@@ -96,6 +98,22 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .empty { text-align:center; color:var(--sub); font-size:13px; margin-top:40px; }
 
+  /* ---- ピン留めバー ---- */
+  .pinned-bar {
+    display:flex; gap:8px; overflow-x:auto; padding: 2px 2px 10px 2px; margin-bottom: 4px;
+  }
+  .pinned-chip {
+    flex-shrink:0; max-width:170px; display:flex; align-items:center; gap:6px;
+    background: var(--accent-soft); border: 1px solid var(--border); border-radius: 14px;
+    padding: 7px 10px; font-size: 12px; color: var(--text); cursor: pointer;
+  }
+  .pinned-chip-label {
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .pinned-chip-x {
+    flex-shrink:0; color: var(--sub); font-size: 13px; line-height:1; padding-left:2px;
+  }
+
   /* 送信元デバイスが「今見ている端末と違う」場合は左寄せに反転表示（UI自体は同じデザイン） */
   .item-row.other-device { margin-left: 0; margin-right: auto; flex-direction: row-reverse; }
   .item-row.other-device .item-content { align-items: flex-start; }
@@ -132,6 +150,7 @@
     </div>
   </div>
 
+  <div class="pinned-bar" id="pinnedBar" style="display:none;"></div>
   <div class="list" id="list"></div>
   <div class="empty" id="emptyMsg" style="display:none;">まだ何もありません。テキストや画像を送ってみましょう。</div>
 </div>
