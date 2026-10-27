@@ -17,6 +17,19 @@
     --accent: #3d5a80;
     --accent-soft: #eef2f6;
     --danger: #b3543f;
+    --on-accent: #ffffff;
+  }
+  /* ---- プライベートモード（裏ページ）の配色 ---- */
+  body.private-mode {
+    --bg: #16171b;
+    --card: #1f2026;
+    --border: #2e3038;
+    --text: #e8e6e1;
+    --sub: #8d8a83;
+    --accent: #c9a96a;
+    --accent-soft: #2a2b33;
+    --danger: #d9765f;
+    --on-accent: #16171b;
   }
   * { box-sizing: border-box; }
   body {
@@ -24,6 +37,7 @@
     background: var(--bg);
     color: var(--text);
     margin: 0;
+    transition: background 0.35s ease, color 0.35s ease;
   }
   #app { max-width: 480px; margin: 0 auto; padding: 16px; min-height: 100vh; }
 
@@ -42,7 +56,16 @@
   #gateError { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 18px; }
 
   .header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
-  .header h1 { font-size:18px; margin:0; font-weight:700; }
+  .header h1 {
+    font-size:18px; margin:0; font-weight:700; cursor:pointer;
+    -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color: transparent;
+    display:flex; align-items:center; gap:8px;
+  }
+  .mode-badge {
+    display:none; font-size:10px; font-weight:600; letter-spacing:0.08em;
+    color: var(--accent); border:1px solid var(--accent); border-radius:999px; padding:2px 8px;
+  }
+  body.private-mode .mode-badge { display:inline-block; }
   .status { font-size:12px; color: var(--sub); }
   .composer { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 10px; margin-bottom: 16px; }
   textarea {
@@ -55,7 +78,7 @@
     display:flex; align-items:center; justify-content:center; cursor:pointer; font-size: 18px; color: var(--accent);
   }
   .send-btn {
-    margin-left: auto; background: var(--accent); color: white; border: none; border-radius: 10px;
+    margin-left: auto; background: var(--accent); color: var(--on-accent); border: none; border-radius: 10px;
     padding: 9px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
   }
   .send-btn:disabled { opacity: 0.4; cursor: default; }
@@ -122,6 +145,36 @@
     border-top-right-radius: 16px;
     border-top-left-radius: 4px;
   }
+
+  /* ---- プライベートモードのパスワード入力 ---- */
+  .priv-modal {
+    position:fixed; inset:0; z-index:10000; background:rgba(0,0,0,0.45);
+    display:none; align-items:center; justify-content:center; padding:24px;
+  }
+  .priv-modal.open { display:flex; }
+  .priv-box {
+    width:100%; max-width:300px; background:#ffffff; color:#2b2925;
+    border-radius:16px; padding:20px; box-shadow:0 8px 30px rgba(0,0,0,0.2);
+  }
+  .priv-box .priv-title { font-size:14px; font-weight:600; margin-bottom:12px; text-align:center; }
+  .priv-box input {
+    width:100%; padding:11px; font-size:16px; border-radius:10px;
+    border:1px solid #e5e1da; text-align:center; outline:none;
+  }
+  .priv-box input:focus { border-color:#3d5a80; }
+  #privError { color:#b3543f; font-size:12px; min-height:18px; margin-top:6px; text-align:center; }
+  .priv-actions { display:flex; gap:8px; margin-top:6px; }
+  .priv-actions button {
+    flex:1; padding:10px; border-radius:10px; font-size:14px; cursor:pointer; border:none;
+  }
+  #privCancel { background:#eef2f6; color:#8a8478; }
+  #privOk { background:#3d5a80; color:#ffffff; font-weight:600; }
+  .priv-box.shake { animation: shake 0.35s ease; }
+  @keyframes shake {
+    0%,100% { transform:translateX(0); }
+    25% { transform:translateX(-5px); }
+    75% { transform:translateX(5px); }
+  }
 </style>
 </head>
 <body>
@@ -136,7 +189,7 @@
 
 <div id="app" style="display:none;">
   <div class="header">
-    <h1>My Drop</h1>
+    <h1 id="appTitle">My Drop<span class="mode-badge" id="modeBadge">PRIVATE</span></h1>
     <span class="status" id="statusText">読み込み中…</span>
   </div>
 
@@ -153,6 +206,18 @@
   <div class="pinned-bar" id="pinnedBar" style="display:none;"></div>
   <div class="list" id="list"></div>
   <div class="empty" id="emptyMsg" style="display:none;">まだ何もありません。テキストや画像を送ってみましょう。</div>
+</div>
+
+<div class="priv-modal" id="privModal">
+  <div class="priv-box" id="privBox">
+    <div class="priv-title">パスワード</div>
+    <input type="password" id="privInput" autocomplete="off" />
+    <div id="privError"></div>
+    <div class="priv-actions">
+      <button id="privCancel">キャンセル</button>
+      <button id="privOk">開く</button>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
