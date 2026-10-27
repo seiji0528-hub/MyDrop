@@ -30,6 +30,9 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+  function fileNameOf(path, fallback) {
+    return (path || fallback).split('/').pop();
+  }
 
   function init() {
     if (!window.supabase) {
@@ -70,6 +73,86 @@
 
     let items = [];
     let pendingFiles = []; // [{kind:'image'|'video', blob, dataUrl?, name}]
+
+    // ---------- プライベートモード（裏ページ） ----------
+    // 状態はメモリ上だけに持つ（localStorage等には保存しない）。
+    // → 再読み込み・タスキル後は必ず表ページから始まる。
+    let isPrivate = false;
+    let viewGen = 0; // モード切替のたびに増やし、切替前に始まった読み込み結果を捨てるために使う
+    const PRIV_CODE = (typeof PRIVATE_CODE !== 'undefined') ? String(PRIVATE_CODE) : null;
+
+    const appTitle = document.getElementById('appTitle');
+    const privModal = document.getElementById('privModal');
+    const privBox = document.getElementById('privBox');
+    const privInput = document.getElementById('privInput');
+    const privError = document.getElementById('privError');
+    const privOk = document.getElementById('privOk');
+    const privCancel = document.getElementById('privCancel');
+
+    function openPrivModal() {
+      privInput.value = '';
+      privError.textContent = '';
+      privModal.classList.add('open');
+      setTimeout(() => privInput.focus(), 50);
+    }
+    function closePrivModal() {
+      privModal.classList.remove('open');
+      privInput.value = '';
+      privInput.blur();
+    }
+    function tryPrivUnlock() {
+      if (!PRIV_CODE) {
+        privError.textContent = 'config.js に PRIVATE_CODE が未設定です';
+        return;
+      }
+      if (privInput.value === PRIV_CODE) {
+        closePrivModal();
+        setMode(true);
+      } else {
+        privError.textContent = 'パスワードが違います';
+        privInput.value = '';
+        privBox.classList.remove('shake');
+        void privBox.offsetWidth;
+        privBox.classList.add('shake');
+      }
+    }
+
+    function setMode(priv) {
+      isPrivate = priv;
+      viewGen++;
+      document.body.classList.toggle('private-mode', priv);
+      // 入力途中の内容が別のページに送られないよう、切替時に入力欄をリセット
+      textInput.value = '';
+      autoGrow();
+      pendingFiles = [];
+      renderPreview();
+      sendBtn.disabled = true;
+      // 前のページの内容を即座に消してから読み込み直す
+      items = [];
+      list.innerHTML = '';
+      document.getElementById('pinnedBar').style.display = 'none';
+      emptyMsg.style.display = 'none';
+      statusText.textContent = '読み込み中…';
+      window.scrollTo(0, 0);
+      refresh();
+    }
+
+    appTitle.addEventListener('click', () => {
+      if (isPrivate) { setMode(false); return; } // 裏ページ中は、もう一度押すと表に戻る
+      openPrivModal();
+    });
+    privOk.addEventListener('click', tryPrivUnlock);
+    privCancel.addEventListener('click', closePrivModal);
+    privInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); tryPrivUnlock(); }
+      if (e.key === 'Escape') closePrivModal();
+    });
+    privModal.addEventListener('click', (e) => { if (e.target === privModal) closePrivModal(); });
+
+    // 戻る/進むでページがキャッシュから復元された場合も表ページに戻す
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted && isPrivate) setMode(false);
+    });
 
     function autoGrow() {
       textInput.style.height = 'auto';
@@ -204,16 +287,17 @@
       const files = pendingFiles.slice();
       if (!text && files.length === 0) return;
       sendBtn.disabled = true;
+      const priv = isPrivate; // 送信開始時点のページに送る（途中で切り替えても混ざらない）
+      const gen = viewGen;
 
       try {
         if (text) {
           statusText.textContent = '送信中…';
-          const { error } = await supabase.from('drop_items').insert({ type: 'text', content: text, device: DEVICE });
+          const { error } = await supabase.from('drop_items').insert({ type: 'text', content: text, device: DEVICE, is_private: priv });
           if (error) {
             showError('テキストの送信に失敗しました', error);
           } else {
-            textInput.value = '';
-            autoGrow();
+            if (gen === viewGen) { textInput.value = ''; autoGrow(); }
             statusText.textContent = '';
             await refresh();
           }
@@ -223,7 +307,7 @@
           const f = files[i];
           statusText.textContent = files.length > 1 ? `送信中…（${i + 1}/${files.length}）` : '送信中…';
           const ext = f.kind === 'video' ? (f.name.split('.').pop() || 'mp4') : 'jpg';
-          const path = `${uid()}.${ext}`;
+          const path = (priv ? 'private/' : '') + `${uid()}.${ext}`;
           const contentType = f.kind === 'video' ? (f.blob.type || 'video/mp4') : 'image/jpeg';
 
           const { error: upErr } = await supabase.storage.from('drop-images').upload(path, f.blob, { contentType });
@@ -231,7 +315,7 @@
             showError((f.kind === 'video' ? '動画' : '画像') + 'のアップロードに失敗しました', upErr);
             continue;
           }
-          const { error: insErr } = await supabase.from('drop_items').insert({ type: f.kind, image_path: path, device: DEVICE });
+          const { error: insErr } = await supabase.from('drop_items').insert({ type: f.kind, image_path: path, device: DEVICE, is_private: priv });
           if (insErr) {
             showError('データベースへの登録に失敗しました', insErr);
             continue;
@@ -282,7 +366,6 @@
 
     // 画像データを取得する。既に読み込み済みの<img>があればcanvas経由（fetchのCORS問題を回避できるため優先）
     async function getBlobForItem(url, imgEl) {
-      // 既に読み込み済みの<img>があればcanvas経由（fetchのCORS問題を回避できるため優先）
       let sourceImg = (imgEl && imgEl.complete && imgEl.naturalWidth) ? imgEl : null;
       if (!sourceImg) {
         try {
@@ -571,7 +654,7 @@
           dlBtn.textContent = '保存';
           dlBtn.onclick = (e) => {
             e.stopPropagation();
-            shareOrDownload(url, it.image_path || 'drop.mp4', null);
+            shareOrDownload(url, fileNameOf(it.image_path, 'drop.mp4'), null);
           };
           actionsSide.appendChild(dlBtn);
         } else {
@@ -582,7 +665,7 @@
           img.loading = 'lazy';
           img.crossOrigin = 'anonymous';
           img.src = url;
-          bubble.onclick = () => openLightbox(url, img, it.image_path || 'drop.jpg');
+          bubble.onclick = () => openLightbox(url, img, fileNameOf(it.image_path, 'drop.jpg'));
           bubble.appendChild(img);
           content.appendChild(bubble);
 
@@ -595,7 +678,7 @@
           dlBtn.textContent = '保存';
           dlBtn.onclick = (e) => {
             e.stopPropagation();
-            shareOrDownload(url, it.image_path || 'drop.jpg', img);
+            shareOrDownload(url, fileNameOf(it.image_path, 'drop.jpg'), img);
           };
           actionsSide.appendChild(dlBtn);
         }
@@ -613,12 +696,16 @@
     }
 
     async function refresh() {
+      const gen = viewGen;
+      const priv = isPrivate;
       try {
         const { data, error } = await supabase
           .from('drop_items')
           .select('*')
+          .eq('is_private', priv)
           .order('created_at', { ascending: false })
           .limit(200);
+        if (gen !== viewGen) return; // 読み込み中にページが切り替わった場合は結果を捨てる
         if (error) {
           showError('読み込みに失敗しました', error);
           return;
@@ -627,6 +714,7 @@
         render();
         if (statusText.textContent === '読み込み中…') statusText.textContent = '';
       } catch (e) {
+        if (gen !== viewGen) return;
         showError('読み込みに失敗しました', e);
       }
     }
