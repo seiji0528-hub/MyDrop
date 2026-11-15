@@ -175,6 +175,67 @@
     25% { transform:translateX(-5px); }
     75% { transform:translateX(5px); }
   }
+  /* ---- ヘッダー右側 ---- */
+  .header-right { display:flex; align-items:center; gap:10px; min-width:0; }
+  .header-right .status { text-align:right; }
+  .head-btn {
+    flex-shrink:0; height:28px; padding:0 12px; border-radius:14px; cursor:pointer;
+    background: var(--card); border:1px solid var(--border); color: var(--sub); font-size:12px;
+  }
+  body.select-mode .head-btn { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight:600; }
+
+  /* ---- LINE風まとめ画像（2列） ---- */
+  .bubble-group {
+    position:relative; width:240px; display:grid; grid-template-columns:1fr 1fr; gap:2px;
+    border-radius:16px; border-top-right-radius:4px; overflow:hidden;
+    background: var(--border); box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+  }
+  .bubble-group .tile { position:relative; aspect-ratio:1 / 1; background: var(--card); cursor:pointer; overflow:hidden; }
+  .bubble-group .tile.wide { grid-column: span 2; aspect-ratio: 2 / 1; }
+  .bubble-group .tile img { width:100%; height:100%; object-fit:cover; display:block; }
+  .group-count {
+    position:absolute; left:8px; bottom:8px; pointer-events:none;
+    background:rgba(0,0,0,0.5); color:#fff; font-size:10px; padding:2px 7px; border-radius:999px;
+  }
+  .item-row.other-device .bubble-group { border-top-right-radius:16px; border-top-left-radius:4px; }
+
+  /* ---- 複数選択モード ---- */
+  .sel-unit { position:relative; }
+  .sel-check { display:none; }
+  body.select-mode .sel-check {
+    display:block; position:absolute; top:6px; right:6px; width:22px; height:22px; border-radius:50%;
+    border:2px solid #fff; background:rgba(0,0,0,0.25); box-shadow:0 1px 3px rgba(0,0,0,0.3); z-index:2;
+    pointer-events:none;
+  }
+  body.select-mode .sel-unit.selected .sel-check { background: var(--accent); border-color: var(--accent); }
+  body.select-mode .sel-unit.selected .sel-check::after {
+    content:''; position:absolute; left:6px; top:2px; width:5px; height:10px;
+    border: solid var(--on-accent); border-width:0 2px 2px 0; transform: rotate(45deg);
+  }
+  body.select-mode .sel-unit { cursor:pointer; }
+  body.select-mode .sel-unit.selected img,
+  body.select-mode .sel-unit.selected video { opacity:0.65; }
+  body.select-mode .bubble-text.selected { outline:2px solid var(--accent); outline-offset:1px; }
+  body.select-mode video { pointer-events:none; }
+  body.select-mode .item-actions-side { visibility:hidden; }
+  body.select-mode #app { padding-bottom: 90px; }
+
+  .select-bar {
+    position:fixed; left:50%; bottom:12px; transform:translateX(-50%); z-index:9000;
+    width:calc(100% - 24px); max-width:456px; display:none; align-items:center; gap:6px;
+    background: var(--card); border:1px solid var(--border); border-radius:16px; padding:8px 10px;
+    box-shadow:0 6px 24px rgba(0,0,0,0.18);
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  body.select-mode .select-bar { display:flex; }
+  .sel-count { font-size:12px; color: var(--sub); margin-right:auto; white-space:nowrap; }
+  .select-bar button {
+    height:32px; padding:0 11px; border-radius:16px; font-size:12px; cursor:pointer; white-space:nowrap;
+    background: var(--accent-soft); border:1px solid var(--border); color: var(--text);
+  }
+  .select-bar button:disabled { opacity:0.4; cursor:default; }
+  .select-bar button.del { color: var(--danger); }
+  .select-bar button.done { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight:600; }
 </style>
 </head>
 <body>
@@ -190,7 +251,10 @@
 <div id="app" style="display:none;">
   <div class="header">
     <h1 id="appTitle">My Drop<span class="mode-badge" id="modeBadge">PRIVATE</span></h1>
-    <span class="status" id="statusText">読み込み中…</span>
+    <div class="header-right">
+      <span class="status" id="statusText">読み込み中…</span>
+      <button class="head-btn" id="selectBtn">選択</button>
+    </div>
   </div>
 
   <div class="composer">
@@ -206,6 +270,14 @@
   <div class="pinned-bar" id="pinnedBar" style="display:none;"></div>
   <div class="list" id="list"></div>
   <div class="empty" id="emptyMsg" style="display:none;">まだ何もありません。テキストや画像を送ってみましょう。</div>
+</div>
+
+<div class="select-bar" id="selectBar">
+  <span class="sel-count" id="selCount">タップして選択</span>
+  <button id="selCopy" disabled>コピー</button>
+  <button id="selShare" disabled>保存/共有</button>
+  <button id="selDelete" class="del" disabled>削除</button>
+  <button id="selCancel" class="done">完了</button>
 </div>
 
 <div class="priv-modal" id="privModal">
