@@ -655,6 +655,13 @@
     const selDelete = document.getElementById('selDelete');
     const selCancel = document.getElementById('selCancel');
 
+    // PCは小さいウィンドウで開くことが多く、画面下のバーが隠れやすいので、ヘッダーのすぐ下に移す
+    if (DEVICE === 'pc') {
+      document.body.classList.add('is-pc');
+      const header = document.querySelector('#app .header');
+      header.parentNode.insertBefore(selectBar, header.nextSibling);
+    }
+
     function urlOf(it) {
       return supabase.storage.from('drop-images').getPublicUrl(it.image_path).data.publicUrl;
     }
