@@ -81,6 +81,65 @@
     let viewGen = 0; // モード切替のたびに増やし、切替前に始まった読み込み結果を捨てるために使う
     const PRIV_CODE = (typeof PRIVATE_CODE !== 'undefined') ? String(PRIVATE_CODE) : null;
 
+    // ---------- 裏ページの高画質写真（Cloudflare R2） ----------
+    // config.js に R2_WORKER_URL があれば有効。パスワードはWorker側で確認し、メモリ上だけに持つ
+    const R2_URL = (typeof R2_WORKER_URL !== 'undefined' && R2_WORKER_URL)
+      ? String(R2_WORKER_URL).replace(/\/+$/, '') : null;
+    let privCode = null; // 裏ページを開いたときに入力したパスワード（Worker認証用）
+    const R2_FREE_BYTES = 10e9;  // 無料枠 10GB
+    const R2_WARN_BYTES = 9e9;   // 9GBを超えたら警告
+    const MAX_HQ_MB = 30;        // 高画質写真1枚あたりの上限
+
+    function hqEnabled() { return isPrivate && !!R2_URL && !!privCode; }
+    function isR2(it) { return !!(it.image_path && it.image_path.startsWith('r2/')); }
+    function r2Key(it) { return it.image_path.slice(3); }
+    function r2FileUrl(key) {
+      return `${R2_URL}/file/${key}?t=${encodeURIComponent(privCode || '')}`;
+    }
+    async function r2Put(key, blob, type) {
+      const res = await fetch(`${R2_URL}/file/${key}`, {
+        method: 'PUT', headers: { 'X-Code': privCode, 'Content-Type': type || blob.type || 'application/octet-stream' }, body: blob,
+      });
+      if (!res.ok) throw new Error('高画質ストレージへの保存に失敗しました（' + res.status + '）');
+    }
+    async function r2Delete(keys) {
+      for (const key of keys) {
+        try { await fetch(`${R2_URL}/file/${key}`, { method: 'DELETE', headers: { 'X-Code': privCode } }); }
+        catch (e) { console.error('[MyDrop] r2 delete failed', key, e); }
+      }
+    }
+    function extOfImage(file) {
+      const fromType = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+        'image/heic': 'heic', 'image/heif': 'heif', 'image/avif': 'avif' }[file.type];
+      if (fromType) return fromType;
+      const e = (file.name || '').split('.').pop().toLowerCase();
+      return /^(jpe?g|png|webp|gif|heic|heif|avif)$/.test(e) ? e.replace('jpeg', 'jpg') : 'jpg';
+    }
+
+    // 使用量の表示と、10GBに近づいたときの警告
+    const r2Usage = document.getElementById('r2Usage');
+    function showR2Usage(u) {
+      if (!r2Usage) return;
+      if (!u || !isPrivate) { r2Usage.style.display = 'none'; return; }
+      const gb = (u.bytes / 1e9).toFixed(2);
+      r2Usage.style.display = 'block';
+      r2Usage.classList.toggle('warn', u.bytes >= R2_WARN_BYTES);
+      if (u.bytes >= R2_FREE_BYTES) {
+        r2Usage.textContent = `高画質写真の保存容量が ${gb}GB になり、無料枠の10GBを超えています。超えた分は1GBあたり月2円ほどかかります（支払い方法は登録済み）。無料のまま使いたい場合は、前の写真を消してください。`;
+      } else if (u.bytes >= R2_WARN_BYTES) {
+        r2Usage.textContent = `高画質写真の保存容量が ${gb}GB / 10GB で、無料枠に近づいています。10GBを超えると、超えた分は1GBあたり月2円ほどかかります（支払い方法は登録済み）。無料のまま使いたい場合は、前の写真を消してください。`;
+      } else {
+        r2Usage.textContent = `高画質保存：${gb}GB / 10GB`;
+      }
+    }
+    async function checkR2Usage() {
+      if (!hqEnabled()) { showR2Usage(null); return; }
+      try {
+        const res = await fetch(`${R2_URL}/usage`, { headers: { 'X-Code': privCode } });
+        if (res.ok && isPrivate) showR2Usage(await res.json());
+      } catch (e) { console.error('[MyDrop] usage check failed', e); }
+    }
+
     const appTitle = document.getElementById('appTitle');
     const privModal = document.getElementById('privModal');
     const privBox = document.getElementById('privBox');
@@ -100,20 +159,57 @@
       privInput.value = '';
       privInput.blur();
     }
-    function tryPrivUnlock() {
+    function wrongPrivCode() {
+      privError.textContent = 'パスワードが違います';
+      privInput.value = '';
+      privBox.classList.remove('shake');
+      void privBox.offsetWidth;
+      privBox.classList.add('shake');
+    }
+    async function tryPrivUnlock() {
+      const typed = privInput.value;
+      if (!typed) return;
+      if (R2_URL) {
+        // 高画質ストレージ（Worker）にパスワードを確認してもらう
+        privOk.disabled = true;
+        privError.textContent = '確認中…';
+        try {
+          const res = await fetch(`${R2_URL}/usage`, { headers: { 'X-Code': typed } });
+          if (res.ok) {
+            const u = await res.json();
+            privCode = typed;
+            closePrivModal();
+            setMode(true);
+            showR2Usage(u);
+            return;
+          }
+          if (res.status === 401) { wrongPrivCode(); return; }
+          throw new Error('status ' + res.status);
+        } catch (err) {
+          console.error('[MyDrop] worker unlock failed', err);
+          // Workerにつながらない場合：config.jsのパスワードで開けるが、高画質保存は使えない
+          if (PRIV_CODE && typed === PRIV_CODE) {
+            privCode = null;
+            closePrivModal();
+            setMode(true);
+            statusText.textContent = '高画質ストレージに接続できないため、今は通常画質で保存されます';
+            return;
+          }
+          privError.textContent = '高画質ストレージに接続できません';
+        } finally {
+          privOk.disabled = false;
+        }
+        return;
+      }
       if (!PRIV_CODE) {
         privError.textContent = 'config.js に PRIVATE_CODE が未設定です';
         return;
       }
-      if (privInput.value === PRIV_CODE) {
+      if (typed === PRIV_CODE) {
         closePrivModal();
         setMode(true);
       } else {
-        privError.textContent = 'パスワードが違います';
-        privInput.value = '';
-        privBox.classList.remove('shake');
-        void privBox.offsetWidth;
-        privBox.classList.add('shake');
+        wrongPrivCode();
       }
     }
 
@@ -122,6 +218,7 @@
       viewGen++;
       document.body.classList.toggle('private-mode', priv);
       setSelectMode(false);
+      if (!priv) { privCode = null; showR2Usage(null); }
       // 入力途中の内容が別のページに送られないよう、切替時に入力欄をリセット
       textInput.value = '';
       autoGrow();
@@ -201,8 +298,20 @@
               pendingFiles.push({ kind: 'video', blob: file, name: file.name });
             }
           } else if (file.type.startsWith('image/')) {
-            const { blob, dataUrl } = await compressImage(file);
-            pendingFiles.push({ kind: 'image', blob, dataUrl, name: file.name });
+            if (hqEnabled()) {
+              // 裏ページ：元画像をそのまま保存し、一覧用に小さいサムネイルだけ作る
+              const sizeMB = file.size / (1024 * 1024);
+              if (sizeMB > MAX_HQ_MB) {
+                statusText.textContent = `「${file.name}」は${sizeMB.toFixed(1)}MBあり、上限${MAX_HQ_MB}MBを超えています（スキップしました）`;
+                await sleep(1500);
+              } else {
+                const thumb = await compressImage(file, 640, 0.8);
+                pendingFiles.push({ kind: 'image', hq: true, blob: file, thumb: thumb.blob, dataUrl: thumb.dataUrl, name: file.name });
+              }
+            } else {
+              const { blob, dataUrl } = await compressImage(file);
+              pendingFiles.push({ kind: 'image', blob, dataUrl, name: file.name });
+            }
           }
         } catch (err) {
           console.error('[MyDrop] file processing error', err);
@@ -256,14 +365,15 @@
       }
     }
 
-    function compressImage(file) {
+    function compressImage(file, maxDimArg, qualityArg) {
+      const maxDim = maxDimArg || 1600;
+      const quality = qualityArg || 0.85;
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
           const img = new Image();
           img.onload = () => {
             let { width, height } = img;
-            const maxDim = 1600;
             if (width > maxDim || height > maxDim) {
               if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
               else { width = Math.round(width * maxDim / height); height = maxDim; }
@@ -274,9 +384,9 @@
             ctx.drawImage(img, 0, 0, width, height);
             canvas.toBlob((blob) => {
               if (!blob) { reject(new Error('画像の圧縮に失敗しました')); return; }
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              const dataUrl = canvas.toDataURL('image/jpeg', quality);
               resolve({ blob, dataUrl });
-            }, 'image/jpeg', 0.85);
+            }, 'image/jpeg', quality);
           };
           img.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
           img.src = e.target.result;
@@ -311,18 +421,35 @@
         const imageCount = files.filter(f => f.kind === 'image').length;
         const groupId = imageCount >= 2 ? uid() : null;
         const groupRows = []; // グループ分は全部アップロードしてから一括登録（途中の状態を見せないため）
+        let usedR2 = false;
 
         for (let i = 0; i < files.length; i++) {
           const f = files[i];
           statusText.textContent = files.length > 1 ? `送信中…（${i + 1}/${files.length}）` : '送信中…';
-          const ext = f.kind === 'video' ? (f.name.split('.').pop() || 'mp4') : 'jpg';
-          const path = (priv ? 'private/' : '') + `${uid()}.${ext}`;
-          const contentType = f.kind === 'video' ? (f.blob.type || 'video/mp4') : 'image/jpeg';
+          let path;
+          if (f.hq) {
+            // 高画質：元画像とサムネイルをCloudflare R2へ
+            const id = uid();
+            const key = `${id}.${extOfImage(f.blob)}`;
+            try {
+              await r2Put(`thumb/${id}.jpg`, f.thumb, 'image/jpeg');
+              await r2Put(key, f.blob, f.blob.type);
+            } catch (err) {
+              showError('画像のアップロードに失敗しました', err);
+              continue;
+            }
+            path = 'r2/' + key;
+            usedR2 = true;
+          } else {
+            const ext = f.kind === 'video' ? (f.name.split('.').pop() || 'mp4') : 'jpg';
+            path = (priv ? 'private/' : '') + `${uid()}.${ext}`;
+            const contentType = f.kind === 'video' ? (f.blob.type || 'video/mp4') : 'image/jpeg';
 
-          const { error: upErr } = await supabase.storage.from('drop-images').upload(path, f.blob, { contentType });
-          if (upErr) {
-            showError((f.kind === 'video' ? '動画' : '画像') + 'のアップロードに失敗しました', upErr);
-            continue;
+            const { error: upErr } = await supabase.storage.from('drop-images').upload(path, f.blob, { contentType });
+            if (upErr) {
+              showError((f.kind === 'video' ? '動画' : '画像') + 'のアップロードに失敗しました', upErr);
+              continue;
+            }
           }
           const row = { type: f.kind, image_path: path, device: DEVICE, is_private: priv };
           if (groupId && f.kind === 'image') {
@@ -363,6 +490,7 @@
             statusText.textContent = '';
           }
         }
+        if (usedR2) checkR2Usage();
       } catch (err) {
         showError('送信に失敗しました', err);
       }
@@ -383,7 +511,8 @@
       const { error } = await supabase.from('drop_items').delete().eq('id', it.id);
       if (error) { showError('削除に失敗しました', error); return; }
       if ((it.type === 'image' || it.type === 'video') && it.image_path) {
-        await supabase.storage.from('drop-images').remove([it.image_path]);
+        if (isR2(it)) { await r2Delete([r2Key(it)]); checkR2Usage(); }
+        else await supabase.storage.from('drop-images').remove([it.image_path]);
       }
       await refresh();
     }
@@ -437,7 +566,14 @@
     async function shareOrDownload(url, filename, imgEl) {
       let blob;
       try {
-        blob = await getBlobForItem(url, imgEl);
+        if (imgEl) blob = await getBlobForItem(url, imgEl);
+        else {
+          try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('取得失敗 ' + res.status);
+            blob = await res.blob();
+          } catch (e) { blob = await getBlobForItem(url, null); }
+        }
       } catch (err) {
         showError('保存に失敗しました', err);
         return;
@@ -663,7 +799,13 @@
     }
 
     function urlOf(it) {
+      if (isR2(it)) return r2FileUrl(r2Key(it));
       return supabase.storage.from('drop-images').getPublicUrl(it.image_path).data.publicUrl;
+    }
+    // 一覧表示用（高画質写真はサムネイル、それ以外は元と同じ）
+    function thumbUrlOf(it) {
+      if (isR2(it)) return r2FileUrl('thumb/' + r2Key(it).replace(/\.\w+$/, '.jpg'));
+      return urlOf(it);
     }
     function isMedia(it) { return it.type === 'image' || it.type === 'video'; }
 
@@ -819,8 +961,11 @@
       if (!confirm(`${list.length}件を削除しますか？`)) return false;
       const { error } = await supabase.from('drop_items').delete().in('id', list.map(it => it.id));
       if (error) { showError('削除に失敗しました', error); return false; }
-      const paths = list.filter(it => isMedia(it) && it.image_path).map(it => it.image_path);
+      const media = list.filter(it => isMedia(it) && it.image_path);
+      const paths = media.filter(it => !isR2(it)).map(it => it.image_path);
       if (paths.length) await supabase.storage.from('drop-images').remove(paths);
+      const r2Keys = media.filter(isR2).map(r2Key);
+      if (r2Keys.length) { await r2Delete(r2Keys); checkR2Usage(); }
       await refresh();
       return true;
     }
@@ -901,10 +1046,12 @@
         const img = document.createElement('img');
         img.loading = 'lazy';
         img.crossOrigin = 'anonymous';
-        img.src = url;
+        img.src = thumbUrlOf(it);
         tile.appendChild(img);
-        imgEls.set(it.id, img);
-        makeSelectable(tile, it, () => openLightbox(url, img, fileNameOf(it.image_path, 'drop.jpg')));
+        // 高画質写真の<img>は小さいサムネイルなので、コピー・保存には使わない（元画像を取りに行く）
+        const srcImg = isR2(it) ? null : img;
+        if (srcImg) imgEls.set(it.id, img);
+        makeSelectable(tile, it, () => openLightbox(url, srcImg, fileNameOf(it.image_path, 'drop.jpg')));
         grid.appendChild(tile);
       });
       const count = document.createElement('div');
@@ -954,13 +1101,14 @@
         const img = document.createElement('img');
         img.loading = 'lazy';
         img.crossOrigin = 'anonymous';
-        img.src = url;
+        img.src = thumbUrlOf(it);
         bubble.appendChild(img);
-        imgEls.set(it.id, img);
-        makeSelectable(bubble, it, () => openLightbox(url, img, fileNameOf(it.image_path, 'drop.jpg')));
+        const srcImg = isR2(it) ? null : img;
+        if (srcImg) imgEls.set(it.id, img);
+        makeSelectable(bubble, it, () => openLightbox(url, srcImg, fileNameOf(it.image_path, 'drop.jpg')));
         content.appendChild(bubble);
-        sideBtn(actionsSide, 'コピー', (b) => copyImage(url, img, b));
-        sideBtn(actionsSide, '保存', () => shareOrDownload(url, fileNameOf(it.image_path, 'drop.jpg'), img));
+        sideBtn(actionsSide, 'コピー', (b) => copyImage(url, srcImg, b));
+        sideBtn(actionsSide, '保存', () => shareOrDownload(url, fileNameOf(it.image_path, 'drop.jpg'), srcImg));
       }
 
       sideBtn(actionsSide, '削除', () => deleteItem(it), 'del');
