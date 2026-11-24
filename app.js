@@ -648,106 +648,338 @@
     }
 
     // 画像を大きく表示し、ピンチ／ホイールで拡大縮小できるビューアー
-    function openLightbox(url, imgElForCopy, filename) {
+    // ---------- 写真ビューアー ----------
+    // ・左右スワイプ（PCは ← → キー／画面の ‹ › ／タッチパッドの横スワイプ）で前後の写真へ
+    // ・ピンチ（PCはスクロール／タッチパッドのピンチ）で、指やカーソルの位置を中心に拡大縮小
+    // ・ダブルタップで拡大／元に戻す、下にスワイプで閉じる
+    let galleryUnits = []; // 画面の並び順（新しい順）で、1件 or まとめ画像の配列を入れる。render()で作る
+
+    function galleryEntry(it, srcImg) {
+      return {
+        id: it.id,
+        url: urlOf(it),
+        thumb: thumbUrlOf(it),
+        srcImg,
+        filename: fileNameOf(it.image_path, 'drop.jpg'),
+      };
+    }
+
+    function openLightbox(startId) {
+      // 送った順（古い→新しい）に並べる。まとめ画像の中は左上から順
+      const gallery = galleryUnits.slice().reverse().flat();
+      if (!gallery.length) return;
+      let index = Math.max(0, gallery.findIndex(g => g.id === startId));
+
+      const MIN_SCALE = 1, MAX_SCALE = 6;
+
       const overlay = document.createElement('div');
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;' +
-        'display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none;';
-
+      overlay.className = 'lb-overlay';
+      const stage = document.createElement('div');
+      stage.className = 'lb-stage';
       const img = document.createElement('img');
-      img.src = url;
-      img.style.cssText = 'max-width:92vw;max-height:78vh;touch-action:none;user-select:none;' +
-        'transform-origin:center center;cursor:grab;';
-      overlay.appendChild(img);
+      img.className = 'lb-img';
+      img.draggable = false;
+      img.alt = '';
+      stage.appendChild(img);
+      overlay.appendChild(stage);
 
-      let scale = 1, tx = 0, ty = 0;
-      function applyTransform() {
-        img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-      }
-
-      const pointers = new Map();
-      let startDist = 0, startScale = 1, panStart = null, startTxTy = null;
-
-      img.addEventListener('pointerdown', (e) => {
-        img.setPointerCapture(e.pointerId);
-        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        if (pointers.size === 1) {
-          panStart = { x: e.clientX, y: e.clientY };
-          startTxTy = { x: tx, y: ty };
-        } else if (pointers.size === 2) {
-          const pts = [...pointers.values()];
-          startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-          startScale = scale;
-        }
-      });
-      img.addEventListener('pointermove', (e) => {
-        if (!pointers.has(e.pointerId)) return;
-        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        if (pointers.size === 2) {
-          const pts = [...pointers.values()];
-          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-          if (startDist > 0) {
-            scale = Math.min(5, Math.max(1, startScale * (dist / startDist)));
-            applyTransform();
-          }
-        } else if (pointers.size === 1 && panStart) {
-          tx = startTxTy.x + (e.clientX - panStart.x);
-          ty = startTxTy.y + (e.clientY - panStart.y);
-          applyTransform();
-        }
-      });
-      function endPointer(e) {
-        pointers.delete(e.pointerId);
-        if (pointers.size < 2) startDist = 0;
-        if (pointers.size === 0) panStart = null;
-      }
-      img.addEventListener('pointerup', endPointer);
-      img.addEventListener('pointercancel', endPointer);
-      img.addEventListener('pointerleave', endPointer);
-
-      let lastTap = 0;
-      img.addEventListener('pointerup', () => {
-        const now = Date.now();
-        if (now - lastTap < 300 && pointers.size === 0) {
-          if (scale > 1) { scale = 1; tx = 0; ty = 0; } else { scale = 2; }
-          applyTransform();
-        }
-        lastTap = now;
-      });
-
-      overlay.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        scale = Math.min(5, Math.max(1, scale - e.deltaY * 0.0015));
-        applyTransform();
-      }, { passive: false });
-
-      const toolbar = document.createElement('div');
-      toolbar.style.cssText = 'position:absolute;top:14px;right:14px;display:flex;gap:8px;';
-      function mkBtn(label) {
+      // 上部：枚数表示とボタン
+      const topBar = document.createElement('div');
+      topBar.className = 'lb-top';
+      const counter = document.createElement('div');
+      counter.className = 'lb-counter';
+      const tools = document.createElement('div');
+      tools.className = 'lb-tools';
+      function mkBtn(label, cls) {
         const b = document.createElement('button');
         b.textContent = label;
-        b.style.cssText = 'padding:8px 14px;border-radius:20px;border:none;background:rgba(255,255,255,0.18);' +
-          'color:#fff;font-size:13px;cursor:pointer;';
+        b.className = cls || 'lb-btn';
         return b;
       }
-      const closeBtn = mkBtn('閉じる');
-      closeBtn.onclick = () => overlay.remove();
       const copyBtn = mkBtn('コピー');
-      copyBtn.onclick = () => copyImage(url, imgElForCopy, copyBtn);
       const saveBtn = mkBtn('保存');
-      saveBtn.onclick = () => shareOrDownload(url, filename || 'drop.jpg', imgElForCopy);
-      toolbar.appendChild(copyBtn);
-      toolbar.appendChild(saveBtn);
-      toolbar.appendChild(closeBtn);
-      overlay.appendChild(toolbar);
+      const closeBtn = mkBtn('閉じる');
+      tools.append(copyBtn, saveBtn, closeBtn);
+      topBar.append(counter, tools);
+      overlay.appendChild(topBar);
+
+      const prevBtn = mkBtn('‹', 'lb-nav lb-prev');
+      const nextBtn = mkBtn('›', 'lb-nav lb-next');
+      overlay.append(prevBtn, nextBtn);
 
       const hint = document.createElement('div');
-      hint.style.cssText = 'position:absolute;bottom:16px;left:0;right:0;text-align:center;' +
-        'color:rgba(255,255,255,0.6);font-size:11px;padding:0 24px;';
-      hint.textContent = 'ピンチ操作（PCはスクロール）で拡大縮小できます。うまくコピーできない場合は、この画面のままスクリーンショット（Windowsは Win+Shift+S のSnipping Tool）も使えます';
+      hint.className = 'lb-hint';
+      hint.textContent = DEVICE === 'pc'
+        ? '← → キーで前後の写真　スクロール／タッチパッドのピンチで拡大　Escで閉じる'
+        : '左右スワイプで前後の写真　ピンチ・ダブルタップで拡大　下にスワイプで閉じる';
       overlay.appendChild(hint);
+      setTimeout(() => hint.classList.add('fade'), 2500);
 
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+      // ---- 表示状態 ----
+      let scale = 1, tx = 0, ty = 0;
+      function apply(animate) {
+        img.style.transition = animate ? 'transform 0.22s ease-out' : 'none';
+        img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+      }
+      function stageCenter() {
+        const r = stage.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+      }
+      // 画像がはみ出しすぎないよう、移動できる範囲に収める
+      function clampPan() {
+        const c = stageCenter();
+        const maxX = Math.max(0, (img.offsetWidth * scale - c.w) / 2);
+        const maxY = Math.max(0, (img.offsetHeight * scale - c.h) / 2);
+        tx = Math.min(maxX, Math.max(-maxX, tx));
+        ty = Math.min(maxY, Math.max(-maxY, ty));
+      }
+      // 画面上の点(px,py)を中心にして拡大率を変える
+      function zoomAt(px, py, newScale, animate) {
+        const c = stageCenter();
+        const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
+        const ox = px - c.x, oy = py - c.y;
+        tx = ox - (ox - tx) * (ns / scale);
+        ty = oy - (oy - ty) * (ns / scale);
+        scale = ns;
+        if (scale <= 1.001) { scale = 1; tx = 0; ty = 0; }
+        clampPan();
+        apply(animate);
+      }
+      function resetZoom(animate) { scale = 1; tx = 0; ty = 0; apply(animate); }
+
+      // ---- 写真の切り替え ----
+      function current() { return gallery[index]; }
+      function preload(i) {
+        const g = gallery[i];
+        if (g) { const p = new Image(); p.src = g.url; }
+      }
+      function showCurrent() {
+        const g = current();
+        counter.textContent = gallery.length > 1 ? `${index + 1} / ${gallery.length}` : '';
+        prevBtn.style.visibility = index > 0 ? 'visible' : 'hidden';
+        nextBtn.style.visibility = index < gallery.length - 1 ? 'visible' : 'hidden';
+        // 高画質写真は、まずサムネイルを出してすぐ表示し、元画像が読み込めたら差し替える
+        img.src = g.thumb;
+        if (g.url !== g.thumb) {
+          const full = new Image();
+          full.onload = () => { if (current() === g) img.src = g.url; };
+          full.src = g.url;
+        }
+        preload(index + 1);
+        preload(index - 1);
+      }
+      let sliding = false;
+      function go(dir) {
+        const ni = index + dir;
+        if (sliding) return;
+        if (ni < 0 || ni >= gallery.length) { resetZoom(true); return; }
+        sliding = true;
+        const w = stageCenter().w;
+        scale = 1; ty = 0;
+        tx = -dir * w;               // 今の写真を外へ
+        apply(true);
+        setTimeout(() => {
+          index = ni;
+          showCurrent();
+          tx = dir * w;              // 反対側から
+          apply(false);
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            tx = 0;
+            apply(true);
+            setTimeout(() => { sliding = false; }, 230);
+          }));
+        }, 180);
+      }
+
+      // ---- タッチ／マウス操作 ----
+      const pointers = new Map();
+      let gesture = null; // 'pan' | 'swipe-x' | 'swipe-y' | 'pinch' | null
+      let start = null;   // 操作開始時の状態
+      let pinchStart = null;
+      let lastTap = { t: 0, x: 0, y: 0 };
+      let moved = false;
+
+      function mid() {
+        const p = [...pointers.values()];
+        return { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2, d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) };
+      }
+      function beginSingle(e) {
+        start = { x: e.clientX, y: e.clientY, tx, ty, t: performance.now() };
+        gesture = scale > 1.01 ? 'pan' : null;
+      }
+
+      stage.addEventListener('pointerdown', (e) => {
+        if (sliding) return;
+        try { stage.setPointerCapture(e.pointerId); } catch (err) { /* 一部ブラウザでは失敗しても問題なし */ }
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 1) {
+          moved = false;
+          beginSingle(e);
+        } else if (pointers.size === 2) {
+          const m = mid();
+          const c = stageCenter();
+          gesture = 'pinch';
+          pinchStart = { d: m.d, scale, tx, ty, mx: m.x - c.x, my: m.y - c.y };
+          moved = true;
+        }
+      });
+
+      stage.addEventListener('pointermove', (e) => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+        if (gesture === 'pinch' && pointers.size >= 2) {
+          const m = mid();
+          const c = stageCenter();
+          // 少しだけ1倍未満まで縮められる（離すと戻る）ので、縮小の動きが途中で止まらない
+          const ns = Math.min(MAX_SCALE, Math.max(0.7, pinchStart.scale * (m.d / pinchStart.d)));
+          const ox = m.x - c.x, oy = m.y - c.y;
+          tx = ox - (pinchStart.mx - pinchStart.tx) * (ns / pinchStart.scale);
+          ty = oy - (pinchStart.my - pinchStart.ty) * (ns / pinchStart.scale);
+          scale = ns;
+          apply(false);
+          return;
+        }
+        if (pointers.size !== 1 || !start) return;
+
+        const dx = e.clientX - start.x, dy = e.clientY - start.y;
+        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moved = true;
+
+        if (gesture === 'pan') {
+          tx = start.tx + dx; ty = start.ty + dy;
+          apply(false);
+          return;
+        }
+        if (!gesture && moved) {
+          gesture = Math.abs(dx) >= Math.abs(dy) ? 'swipe-x' : (dy > 0 ? 'swipe-y' : null);
+        }
+        if (gesture === 'swipe-x') {
+          // 端の写真ではゴムのように少しだけ動く
+          const atEdge = (dx > 0 && index === 0) || (dx < 0 && index === gallery.length - 1);
+          tx = atEdge ? dx * 0.3 : dx;
+          apply(false);
+        } else if (gesture === 'swipe-y') {
+          ty = Math.max(0, dy);
+          apply(false);
+          overlay.style.backgroundColor = `rgba(0,0,0,${Math.max(0.35, 0.94 - ty / 500)})`;
+        }
+      });
+
+      function endPointer(e) {
+        if (!pointers.has(e.pointerId)) return;
+        const wasPinch = gesture === 'pinch';
+        pointers.delete(e.pointerId);
+
+        if (wasPinch) {
+          if (pointers.size === 1) {
+            // 2本→1本になったら、残った指でそのまま移動できるようにする
+            const p = [...pointers.values()][0];
+            start = { x: p.x, y: p.y, tx, ty, t: performance.now() };
+            gesture = scale > 1.01 ? 'pan' : 'done';
+            return;
+          }
+          if (pointers.size === 0) {
+            gesture = null;
+            if (scale < 1) resetZoom(true);
+            else { clampPan(); apply(true); }
+          }
+          return;
+        }
+        if (pointers.size > 0 || !start) return;
+
+        const dx = e.clientX - start.x, dy = e.clientY - start.y;
+        const dt = Math.max(1, performance.now() - start.t);
+
+        if (gesture === 'pan' || gesture === 'done') {
+          // ピンチの指を1本ずつ離した場合もここに来る。縮めすぎていたら元の大きさに戻す
+          if (scale < 1.01) resetZoom(true);
+          else { clampPan(); apply(true); }
+        } else if (gesture === 'swipe-x') {
+          const w = stageCenter().w;
+          const fast = Math.abs(dx) / dt > 0.45 && Math.abs(dx) > 30;
+          if (Math.abs(dx) > Math.min(90, w * 0.2) || fast) go(dx < 0 ? 1 : -1);
+          else resetZoom(true);
+        } else if (gesture === 'swipe-y') {
+          if (dy > 110 || (dy / dt > 0.5 && dy > 40)) { close(); return; }
+          overlay.style.backgroundColor = '';
+          resetZoom(true);
+        } else if (!moved && gesture !== 'done') {
+          // タップ：ダブルタップで拡大／元に戻す。写真の外を1回タップで閉じる
+          const now = performance.now();
+          const dbl = now - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30;
+          if (dbl) {
+            lastTap.t = 0;
+            if (scale > 1.01) resetZoom(true);
+            else zoomAt(e.clientX, e.clientY, 2.5, true);
+          } else {
+            lastTap = { t: now, x: e.clientX, y: e.clientY };
+            if (e.target === stage && scale <= 1.01) {
+              setTimeout(() => { if (lastTap.t === now) close(); }, 300);
+            }
+          }
+        }
+        gesture = null;
+        start = null;
+      }
+      stage.addEventListener('pointerup', endPointer);
+      stage.addEventListener('pointercancel', endPointer);
+
+      // PC：ホイール／タッチパッド
+      let wheelX = 0, wheelLock = 0;
+      overlay.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? 400 : 1);
+        const dx = e.deltaX * unit, dy = e.deltaY * unit;
+        // タッチパッドの2本指の横スワイプ（拡大していない時）→ 前後の写真
+        if (!e.ctrlKey && scale <= 1.01 && Math.abs(dx) > Math.abs(dy)) {
+          if (performance.now() < wheelLock) return;
+          wheelX += dx;
+          if (Math.abs(wheelX) > 80) {
+            go(wheelX > 0 ? 1 : -1);
+            wheelX = 0;
+            wheelLock = performance.now() + 450;
+          }
+          return;
+        }
+        wheelX = 0;
+        // 拡大中の2本指移動（タッチパッド）は写真の移動
+        if (!e.ctrlKey && scale > 1.01 && Math.abs(dx) > 0.5 && Math.abs(dx) >= Math.abs(dy) * 0.5) {
+          tx -= dx; ty -= dy;
+          clampPan(); apply(false);
+          return;
+        }
+        // タッチパッドのピンチは ctrlKey 付きの小さな値で来るので、強めに効かせる
+        const k = e.ctrlKey ? 0.012 : 0.0025;
+        const d = Math.max(-60, Math.min(60, dy));
+        zoomAt(e.clientX, e.clientY, scale * Math.exp(-d * k), false);
+      }, { passive: false });
+
+      function onKey(e) {
+        if (e.key === 'Escape') close();
+        else if (e.key === 'ArrowRight') go(1);
+        else if (e.key === 'ArrowLeft') go(-1);
+        else if (e.key === '+' || e.key === '=') { const c = stageCenter(); zoomAt(c.x, c.y, scale * 1.4, true); }
+        else if (e.key === '-') { const c = stageCenter(); zoomAt(c.x, c.y, scale / 1.4, true); }
+        else if (e.key === '0') resetZoom(true);
+        else return;
+        e.preventDefault();
+      }
+      document.addEventListener('keydown', onKey);
+
+      function close() {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+      }
+
+      prevBtn.onclick = (e) => { e.stopPropagation(); go(-1); };
+      nextBtn.onclick = (e) => { e.stopPropagation(); go(1); };
+      closeBtn.onclick = close;
+      copyBtn.onclick = () => { const g = current(); copyImage(g.url, g.srcImg, copyBtn); };
+      saveBtn.onclick = () => { const g = current(); shareOrDownload(g.url, g.filename, g.srcImg); };
+
       document.body.appendChild(overlay);
+      showCurrent();
+      apply(false);
     }
 
     function renderPinned() {
@@ -987,6 +1219,7 @@
       list.innerHTML = '';
       unitEls.clear();
       imgEls.clear();
+      galleryUnits = [];
       renderPinned();
       emptyMsg.style.display = items.length === 0 ? 'block' : 'none';
 
@@ -1037,6 +1270,8 @@
       const { row, content, actionsSide } = makeRow(first);
       const grid = document.createElement('div');
       grid.className = 'bubble-group';
+      const unit = [];
+      galleryUnits.push(unit);
       members.forEach((it, idx) => {
         const url = urlOf(it);
         const tile = document.createElement('div');
@@ -1051,7 +1286,8 @@
         // 高画質写真の<img>は小さいサムネイルなので、コピー・保存には使わない（元画像を取りに行く）
         const srcImg = isR2(it) ? null : img;
         if (srcImg) imgEls.set(it.id, img);
-        makeSelectable(tile, it, () => openLightbox(url, srcImg, fileNameOf(it.image_path, 'drop.jpg')));
+        makeSelectable(tile, it, () => openLightbox(it.id));
+        unit.push(galleryEntry(it, srcImg));
         grid.appendChild(tile);
       });
       const count = document.createElement('div');
@@ -1105,7 +1341,8 @@
         bubble.appendChild(img);
         const srcImg = isR2(it) ? null : img;
         if (srcImg) imgEls.set(it.id, img);
-        makeSelectable(bubble, it, () => openLightbox(url, srcImg, fileNameOf(it.image_path, 'drop.jpg')));
+        makeSelectable(bubble, it, () => openLightbox(it.id));
+        galleryUnits.push([galleryEntry(it, srcImg)]);
         content.appendChild(bubble);
         sideBtn(actionsSide, 'コピー', (b) => copyImage(url, srcImg, b));
         sideBtn(actionsSide, '保存', () => shareOrDownload(url, fileNameOf(it.image_path, 'drop.jpg'), srcImg));
