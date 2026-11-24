@@ -228,6 +228,12 @@
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   }
   body.select-mode .select-bar { display:flex; }
+  /* PC：画面下ではなく、ヘッダー直下に固定（スクロールしても上に貼り付く） */
+  body.is-pc .select-bar {
+    position:sticky; top:8px; left:auto; bottom:auto; transform:none;
+    width:100%; max-width:none; margin-bottom:12px; padding-bottom:8px;
+  }
+  body.is-pc.select-mode #app { padding-bottom:16px; }
   .sel-count { font-size:12px; color: var(--sub); margin-right:auto; white-space:nowrap; }
   .select-bar button {
     height:32px; padding:0 11px; border-radius:16px; font-size:12px; cursor:pointer; white-space:nowrap;
@@ -236,6 +242,11 @@
   .select-bar button:disabled { opacity:0.4; cursor:default; }
   .select-bar button.del { color: var(--danger); }
   .select-bar button.done { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight:600; }
+  .r2-usage { display:none; font-size:11px; color: var(--sub); text-align:right; margin:-6px 2px 10px; }
+  .r2-usage.warn {
+    text-align:left; font-size:12px; line-height:1.6; color: var(--text);
+    background: rgba(217,118,95,0.14); border:1px solid var(--danger); border-radius:12px; padding:10px 12px; margin:0 0 12px;
+  }
 </style>
 </head>
 <body>
@@ -256,6 +267,8 @@
       <button class="head-btn" id="selectBtn">選択</button>
     </div>
   </div>
+
+  <div class="r2-usage" id="r2Usage" style="display:none;"></div>
 
   <div class="composer">
     <textarea id="textInput" placeholder="メモを入力…（Enterで送信 / Shift+Enterで改行）" rows="1"></textarea>
