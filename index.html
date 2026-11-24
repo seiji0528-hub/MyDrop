@@ -247,6 +247,47 @@
     text-align:left; font-size:12px; line-height:1.6; color: var(--text);
     background: rgba(217,118,95,0.14); border:1px solid var(--danger); border-radius:12px; padding:10px 12px; margin:0 0 12px;
   }
+  /* ---- 写真ビューアー ---- */
+  .lb-overlay {
+    position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.94);
+    overflow:hidden; touch-action:none; -webkit-user-select:none; user-select:none;
+    transition: background-color 0.2s ease;
+  }
+  .lb-stage {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    touch-action:none; cursor:grab;
+  }
+  .lb-img {
+    max-width:100vw; max-height:100vh; max-height:100dvh; display:block;
+    transform-origin:center center; pointer-events:none; -webkit-user-drag:none;
+  }
+  .lb-top {
+    position:absolute; top:0; left:0; right:0; z-index:2; display:flex; align-items:center; justify-content:space-between;
+    padding:12px 14px; padding-top: calc(12px + env(safe-area-inset-top, 0px));
+    background:linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0)); pointer-events:none;
+  }
+  .lb-counter { color:rgba(255,255,255,0.85); font-size:13px; font-variant-numeric:tabular-nums; }
+  .lb-tools { display:flex; gap:8px; pointer-events:auto; }
+  .lb-btn {
+    padding:8px 14px; border-radius:20px; border:none; background:rgba(255,255,255,0.18);
+    color:#fff; font-size:13px; cursor:pointer;
+  }
+  .lb-nav {
+    position:absolute; top:50%; z-index:2; transform:translateY(-50%);
+    width:44px; height:44px; border-radius:50%; border:none; cursor:pointer;
+    background:rgba(255,255,255,0.16); color:#fff; font-size:28px; line-height:40px; padding:0;
+    display:none;
+  }
+  body.is-pc .lb-nav { display:block; }
+  .lb-nav:hover { background:rgba(255,255,255,0.28); }
+  .lb-prev { left:14px; }
+  .lb-next { right:14px; }
+  .lb-hint {
+    position:absolute; left:0; right:0; bottom:16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    text-align:center; color:rgba(255,255,255,0.7); font-size:11px; padding:0 24px;
+    pointer-events:none; transition: opacity 0.6s ease;
+  }
+  .lb-hint.fade { opacity:0; }
 </style>
 </head>
 <body>
